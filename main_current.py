@@ -1,17 +1,11 @@
 from __future__ import annotations
-
+from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    HTTPException,
-    Query,
-    status,
-)
-from fastapi.middleware.cors import (
-    CORSMiddleware,
-)
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import database_cursor
@@ -33,8 +27,8 @@ from .onboarding_service import (
 from .repository import (
     analytics_overview,
     approve_remediation_request,
-    create_remediation_request,
     create_review,
+    create_remediation_request,
     dashboard_metrics,
     get_incident,
     get_incident_by_batch,
@@ -66,6 +60,25 @@ from .schemas import (
 from .test_cases import TEST_CASES
 
 
+
+PROJECT_ROOT = (
+    Path(__file__)
+    .resolve()
+    .parents[2]
+)
+
+FRONTEND_DIST = (
+    PROJECT_ROOT
+    / "frontend"
+    / "dist"
+)
+
+FRONTEND_ASSETS = (
+    FRONTEND_DIST
+    / "assets"
+)
+
+
 app = FastAPI(
     title="RCA Agent Dashboard API",
     version="0.1.0",
@@ -73,72 +86,41 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(
-        settings.cors_origins,
-    ),
+    allow_origins=list(settings.cors_origins),
     allow_credentials=False,
-    allow_methods=[
-        "GET",
-        "POST",
-        "PUT",
-    ],
-    allow_headers=[
-        "Content-Type",
-    ],
+    allow_methods=["GET", "POST", "PUT"],
+    allow_headers=["Content-Type"],
 )
 
 
 def current_engineer() -> str:
-    """
-    Return the prototype engineer identity supplied by
-    backend configuration.
-    """
+    """Prototype identity supplied by backend configuration."""
 
-    if settings.dev_user_role not in {
-        "engineer",
-        "admin",
-    }:
+    if settings.dev_user_role not in {"engineer", "admin"}:
         raise HTTPException(
-            status_code=(
-                status.HTTP_403_FORBIDDEN
-            ),
-            detail=(
-                "Engineer access is required"
-            ),
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Engineer access is required",
         )
 
     return settings.dev_user_name
 
 
-Engineer = Annotated[
-    str,
-    Depends(current_engineer),
-]
+Engineer = Annotated[str, Depends(current_engineer)]
 
 
 def current_admin() -> str:
-    """
-    Return the prototype administrator identity supplied
-    by backend configuration.
-    """
+    """Prototype admin identity supplied by backend configuration."""
 
     if settings.dev_user_role != "admin":
         raise HTTPException(
-            status_code=(
-                status.HTTP_403_FORBIDDEN
-            ),
-            detail=(
-                "Admin access is required"
-            ),
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access is required",
         )
 
     return settings.dev_user_name
 
 
-Admin = Annotated[
-    str,
-    Depends(current_admin),
-]
+Admin = Annotated[str, Depends(current_admin)]
 
 
 # ============================================================
@@ -149,13 +131,8 @@ Admin = Annotated[
 @app.get("/api/health")
 def health() -> dict:
     try:
-        with database_cursor() as (
-            _,
-            cursor,
-        ):
-            cursor.execute(
-                "SELECT 1 AS healthy"
-            )
+        with database_cursor() as (_, cursor):
+            cursor.execute("SELECT 1 AS healthy")
             cursor.fetchone()
 
         return {
@@ -163,19 +140,15 @@ def health() -> dict:
             "database": "online",
             "orchestrator": "unknown",
             "note": (
-                "An orchestrator heartbeat is not "
-                "available in the current agent code."
+                "An orchestrator heartbeat is not available "
+                "in the current agent code."
             ),
         }
 
     except Exception as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
-            detail=(
-                "Database is unavailable"
-            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is unavailable",
         ) from exc
 
 
@@ -197,10 +170,7 @@ def analytics(
         le=25,
     ),
 ) -> dict:
-    """
-    Return operational analytics for the selected date
-    window.
-    """
+    """Return operational analytics for the selected date window."""
 
     return analytics_overview(
         days=days,
@@ -213,42 +183,29 @@ def analytics(
 # ============================================================
 
 
-@app.get(
-    "/api/admin/onboarding/targets"
-)
-def onboarding_targets(
-    admin: Admin,
-) -> dict:
+@app.get("/api/admin/onboarding/targets")
+def onboarding_targets(admin: Admin) -> dict:
     """
     Return registered SSH and database target metadata.
 
-    Credentials and encrypted secret payloads are never
-    returned.
+    Credentials and encrypted secret payloads are never returned.
     """
 
     _ = admin
 
     try:
-        return (
-            load_registered_target_context()
-        )
+        return load_registered_target_context()
 
-    except (
-        OnboardingAgentConfigurationError
-    ) as exc:
+    except OnboardingAgentConfigurationError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 
 
 @app.post(
     "/api/admin/onboarding/assistant",
-    response_model=(
-        OnboardingAssistantResponse
-    ),
+    response_model=OnboardingAssistantResponse,
 )
 def onboarding_assistant(
     request: OnboardingAssistantRequest,
@@ -257,52 +214,37 @@ def onboarding_assistant(
     """
     Generate and validate an onboarding draft.
 
-    This endpoint does not save or activate the DAG,
-    SOP, target, credential, or selected remediation
-    action.
+    This endpoint does not save or activate the DAG, SOP, target,
+    credential, or selected remediation action.
     """
 
     _ = admin
 
     try:
-        return generate_onboarding_draft(
-            request
-        )
+        return generate_onboarding_draft(request)
 
     except ValueError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_422_UNPROCESSABLE_ENTITY
-            ),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
 
-    except (
-        OnboardingAgentConfigurationError
-    ) as exc:
+    except OnboardingAgentConfigurationError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 
-    except (
-        OnboardingAgentResponseError
-    ) as exc:
+    except OnboardingAgentResponseError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_502_BAD_GATEWAY
-            ),
+            status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
 
 
 @app.get(
     "/api/admin/onboarding/actions",
-    response_model=(
-        OnboardingActionCatalogResponse
-    ),
+    response_model=OnboardingActionCatalogResponse,
 )
 def onboarding_actions(
     admin: Admin,
@@ -316,12 +258,10 @@ def onboarding_actions(
     ),
 ) -> OnboardingActionCatalogResponse:
     """
-    List existing remediation actions available during
-    onboarding.
+    List existing remediation actions available during onboarding.
 
-    Only actions that are ACTIVE and require engineer
-    approval are returned. Results may be filtered by
-    DAG/component and target.
+    Only actions that are ACTIVE and require engineer approval are
+    returned. Results may be filtered by DAG/component and target.
     """
 
     _ = admin
@@ -332,59 +272,43 @@ def onboarding_actions(
             target_id=target_id,
         )
 
-    except (
-        OnboardingConfigurationError
-    ) as exc:
+    except OnboardingConfigurationError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 
     except OnboardingServiceError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_500_INTERNAL_SERVER_ERROR
-            ),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
 
 
 @app.post(
     "/api/admin/onboarding/activate",
-    response_model=(
-        OnboardingActivationResponse
-    ),
-    status_code=(
-        status.HTTP_201_CREATED
-    ),
+    response_model=OnboardingActivationResponse,
+    status_code=status.HTTP_201_CREATED,
 )
 def activate_onboarding_bundle(
     request: OnboardingActivationRequest,
     admin: Admin,
 ) -> OnboardingActivationResponse:
     """
-    Validate and activate one administrator-reviewed
-    onboarding bundle.
+    Validate and activate one administrator-reviewed onboarding bundle.
 
-    Depending on the selected target mode, activation
-    may:
+    Depending on the selected target mode, activation may:
 
     - Reuse an existing SSH target.
     - Reuse an existing database target.
-    - Register a new SSH target and encrypted
-      credentials.
-    - Register a new read-only database target and
-      encrypted credential.
+    - Register a new SSH target and encrypted credentials.
+    - Register a new read-only database target and encrypted credential.
     - Save the authoritative investigation SOP.
     - Register the DAG and exception types.
-    - Link an existing ACTIVE approval-required
-      remediation action.
+    - Link an existing ACTIVE approval-required remediation action.
     - Write an onboarding audit event.
 
-    All persistent changes are performed in one
-    database transaction.
+    All persistent changes are performed in one database transaction.
     """
 
     try:
@@ -393,49 +317,33 @@ def activate_onboarding_bundle(
             activated_by=admin,
         )
 
-    except (
-        OnboardingValidationError
-    ) as exc:
+    except OnboardingValidationError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_422_UNPROCESSABLE_ENTITY
-            ),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
 
     except OnboardingConflictError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
-    except (
-        OnboardingTargetConnectionError
-    ) as exc:
+    except OnboardingTargetConnectionError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_422_UNPROCESSABLE_ENTITY
-            ),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
 
-    except (
-        OnboardingConfigurationError
-    ) as exc:
+    except OnboardingConfigurationError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 
     except OnboardingServiceError as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_500_INTERNAL_SERVER_ERROR
-            ),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
 
@@ -448,18 +356,14 @@ def activate_onboarding_bundle(
 @app.get("/api/test-cases")
 def test_case_catalog() -> dict:
     return {
-        "enabled": (
-            settings.enable_test_injection
-        ),
+        "enabled": settings.enable_test_injection,
         "items": list(TEST_CASES),
     }
 
 
 @app.post(
     "/api/test-cases/{test_case_id}/inject",
-    status_code=(
-        status.HTTP_201_CREATED
-    ),
+    status_code=status.HTTP_201_CREATED,
 )
 def inject_test_case(
     test_case_id: str,
@@ -467,25 +371,19 @@ def inject_test_case(
 ) -> dict:
     if not settings.enable_test_injection:
         raise HTTPException(
-            status_code=(
-                status.HTTP_403_FORBIDDEN
-            ),
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Test injection is disabled. Set "
-                "ENABLE_TEST_INJECTION=true in "
-                "backend/.env and restart FastAPI."
+                "ENABLE_TEST_INJECTION=true in backend/.env "
+                "and restart FastAPI."
             ),
         )
 
-    result = inject_test_batch(
-        test_case_id
-    )
+    result = inject_test_batch(test_case_id)
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Unknown test case",
         )
 
@@ -523,10 +421,7 @@ def incidents(
     }
 
 
-
-#The static by-batch route must be declared before the
-#dynamic /api/incidents/{incident_id} route.
-
+# The static batch route must remain above the dynamic incident-ID route.
 @app.get("/api/incidents/by-batch")
 def incident_detail_by_batch(
     site_code: str = Query(
@@ -538,39 +433,21 @@ def incident_detail_by_batch(
         max_length=255,
     ),
 ) -> dict:
-    """
-    Resolve an externally supplied source error batch
-    into its corresponding live RCA incident.
+    """Resolve a source site and error batch to one live RCA incident."""
 
-    The source identity is the combination of
-    site_code and err_batch_no. The internal
-    incident_id remains the primary key used by the
-    review and remediation workflows.
-    """
-
-    normalized_site_code = (
-        site_code.strip().upper()
-    )
-    normalized_batch_number = (
-        err_batch_no.strip()
-    )
+    normalized_site_code = site_code.strip().upper()
+    normalized_batch_number = err_batch_no.strip()
 
     if not normalized_site_code:
         raise HTTPException(
-            status_code=(
-                status.HTTP_422_UNPROCESSABLE_ENTITY
-            ),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="site_code cannot be empty",
         )
 
     if not normalized_batch_number:
         raise HTTPException(
-            status_code=(
-                status.HTTP_422_UNPROCESSABLE_ENTITY
-            ),
-            detail=(
-                "err_batch_no cannot be empty"
-            ),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="err_batch_no cannot be empty",
         )
 
     incident = get_incident_by_batch(
@@ -580,34 +457,23 @@ def incident_detail_by_batch(
 
     if incident is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                "No imported RCA incident was found "
-                "for the supplied site and error "
-                "batch number"
+                "No imported RCA incident was found for the supplied site "
+                "and error batch number"
             ),
         )
 
     return incident
 
 
-@app.get(
-    "/api/incidents/{incident_id}"
-)
-def incident_detail(
-    incident_id: int,
-) -> dict:
-    incident = get_incident(
-        incident_id
-    )
+@app.get("/api/incidents/{incident_id:int}")
+def incident_detail(incident_id: int) -> dict:
+    incident = get_incident(incident_id)
 
     if incident is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Incident not found",
         )
 
@@ -619,9 +485,7 @@ def incident_detail(
 # ============================================================
 
 
-@app.get(
-    "/api/remediations/actions"
-)
+@app.get("/api/remediations/actions")
 def remediation_actions(
     component_id: Optional[str] = Query(
         default=None,
@@ -629,11 +493,7 @@ def remediation_actions(
     ),
 ) -> dict:
     return {
-        "items": (
-            list_remediation_actions(
-                component_id
-            )
-        )
+        "items": list_remediation_actions(component_id)
     }
 
 
@@ -650,21 +510,16 @@ def remediations(
     ),
 ) -> dict:
     return {
-        "items": (
-            list_remediation_requests(
-                incident_id,
-                limit,
-            )
+        "items": list_remediation_requests(
+            incident_id,
+            limit,
         )
     }
 
 
 @app.post(
-    "/api/incidents/"
-    "{incident_id}/remediations",
-    status_code=(
-        status.HTTP_201_CREATED
-    ),
+    "/api/incidents/{incident_id}/remediations",
+    status_code=status.HTTP_201_CREATED,
 )
 def request_remediation(
     incident_id: int,
@@ -672,162 +527,109 @@ def request_remediation(
     engineer: Engineer,
 ) -> dict:
     try:
-        result = (
-            create_remediation_request(
-                incident_id,
-                request.action_id,
-                request.request_reason,
-                engineer,
-                request.idempotency_key,
-            )
+        result = create_remediation_request(
+            incident_id,
+            request.action_id,
+            request.request_reason,
+            engineer,
+            request.idempotency_key,
         )
 
-    except (
-        ValueError,
-        RuntimeError,
-    ) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Incident not found",
         )
 
     return result
 
 
-@app.post(
-    "/api/remediations/"
-    "{remediation_id}/approve"
-)
+@app.post("/api/remediations/{remediation_id}/approve")
 def approve_remediation(
     remediation_id: int,
     decision: RemediationDecisionRequest,
     engineer: Engineer,
 ) -> dict:
     try:
-        result = (
-            approve_remediation_request(
-                remediation_id,
-                engineer,
-                decision.comment,
-            )
+        result = approve_remediation_request(
+            remediation_id,
+            engineer,
+            decision.comment,
         )
 
-    except (
-        ValueError,
-        RuntimeError,
-    ) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
-            detail=(
-                "Remediation request not found"
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Remediation request not found",
         )
 
     return result
 
 
-@app.post(
-    "/api/remediations/"
-    "{remediation_id}/reject"
-)
+@app.post("/api/remediations/{remediation_id}/reject")
 def reject_remediation(
     remediation_id: int,
     decision: RemediationDecisionRequest,
     engineer: Engineer,
 ) -> dict:
     try:
-        result = (
-            reject_remediation_request(
-                remediation_id,
-                engineer,
-                decision.comment,
-            )
+        result = reject_remediation_request(
+            remediation_id,
+            engineer,
+            decision.comment,
         )
 
-    except (
-        ValueError,
-        RuntimeError,
-    ) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
-            detail=(
-                "Remediation request not found"
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Remediation request not found",
         )
 
     return result
 
 
-@app.post(
-    "/api/remediations/"
-    "{remediation_id}/resolve-manual"
-)
+@app.post("/api/remediations/{remediation_id}/resolve-manual")
 def resolve_manual_remediation_request(
     remediation_id: int,
-    resolution: (
-        RemediationManualResolutionRequest
-    ),
+    resolution: RemediationManualResolutionRequest,
     engineer: Engineer,
 ) -> dict:
     try:
-        result = (
-            resolve_manual_remediation(
-                remediation_id,
-                resolution.outcome,
-                engineer,
-                resolution.comment,
-            )
+        result = resolve_manual_remediation(
+            remediation_id,
+            resolution.outcome,
+            engineer,
+            resolution.comment,
         )
 
-    except (
-        ValueError,
-        RuntimeError,
-    ) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
-            detail=(
-                "Remediation request not found"
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Remediation request not found",
         )
 
     return result
@@ -858,100 +660,67 @@ def closed_incidents(
     }
 
 
-@app.post(
-    "/api/closed-incidents/"
-    "{review_id}/promote"
-)
+@app.post("/api/closed-incidents/{review_id}/promote")
 def promote_closed_incident(
     review_id: int,
     engineer: Engineer,
 ) -> dict:
     try:
-        result = (
-            promote_closed_review(
-                review_id,
-                engineer,
-            )
+        result = promote_closed_review(
+            review_id,
+            engineer,
         )
 
-    except (
-        ValueError,
-        RuntimeError,
-    ) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
-            detail=(
-                "Closed incident review not found"
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Closed incident review not found",
         )
 
     return result
 
 
-@app.put(
-    "/api/closed-incidents/{review_id}"
-)
+@app.put("/api/closed-incidents/{review_id}")
 def edit_closed_incident(
     review_id: int,
     review: ReviewRequest,
     engineer: Engineer,
 ) -> dict:
     try:
-        result = (
-            update_closed_review(
-                review_id,
-                review.decision,
-                review.final_root_cause,
-                review.selected_actions,
-                review.comment,
-                engineer,
-                (
-                    review
-                    .promote_to_knowledge_base
-                ),
-            )
+        result = update_closed_review(
+            review_id,
+            review.decision,
+            review.final_root_cause,
+            review.selected_actions,
+            review.comment,
+            engineer,
+            review.promote_to_knowledge_base,
         )
 
-    except (
-        ValueError,
-        RuntimeError,
-    ) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
-            detail=(
-                "Closed incident review not found"
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Closed incident review not found",
         )
 
     return result
 
 
 @app.post(
-    "/api/incidents/"
-    "{incident_id}/reviews",
-    status_code=(
-        status.HTTP_201_CREATED
-    ),
+    "/api/incidents/{incident_id}/reviews",
+    status_code=status.HTTP_201_CREATED,
 )
 def review_incident(
     incident_id: int,
@@ -966,28 +735,18 @@ def review_incident(
             review.selected_actions,
             review.comment,
             engineer,
-            (
-                review
-                .promote_to_knowledge_base
-            ),
+            review.promote_to_knowledge_base,
         )
 
-    except (
-        ValueError,
-        RuntimeError,
-    ) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(
-            status_code=(
-                status.HTTP_409_CONFLICT
-            ),
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Incident not found",
         )
 
@@ -1007,18 +766,12 @@ def sops() -> dict:
 
 
 @app.get("/api/sops/{dag_id}")
-def sop_detail(
-    dag_id: str,
-) -> dict:
-    sop = get_sop(
-        dag_id
-    )
+def sop_detail(dag_id: str) -> dict:
+    sop = get_sop(dag_id)
 
     if sop is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="SOP not found",
         )
 
@@ -1043,13 +796,10 @@ def save_sop(
     except RuntimeError as exc:
         if str(exc) == "SOP_CHANGED":
             raise HTTPException(
-                status_code=(
-                    status.HTTP_409_CONFLICT
-                ),
+                status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    "The SOP changed after you "
-                    "opened it. Reload before "
-                    "saving."
+                    "The SOP changed after you opened it. "
+                    "Reload before saving."
                 ),
             ) from exc
 
@@ -1057,10 +807,111 @@ def save_sop(
 
     if result is None:
         raise HTTPException(
-            status_code=(
-                status.HTTP_404_NOT_FOUND
-            ),
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="SOP not found",
         )
 
     return result
+# ============================================================
+# Compiled Vue frontend
+# ============================================================
+
+
+if FRONTEND_ASSETS.is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(
+            directory=str(
+                FRONTEND_ASSETS
+            ),
+        ),
+        name="frontend-assets",
+    )
+
+
+def frontend_index_file() -> Path:
+    """Return the compiled Vue index file or raise a clear error."""
+
+    index_file = (
+        FRONTEND_DIST
+        / "index.html"
+    )
+
+    if not index_file.is_file():
+        raise HTTPException(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=(
+                "The frontend production build is not available. "
+                "Run npm run build in the frontend directory."
+            ),
+        )
+
+    return index_file
+
+
+@app.get(
+    "/",
+    include_in_schema=False,
+)
+def frontend_index() -> FileResponse:
+    """Serve the compiled Vue entry page."""
+
+    return FileResponse(
+        frontend_index_file()
+    )
+
+
+@app.get(
+    "/{frontend_path:path}",
+    include_in_schema=False,
+)
+def frontend_route(
+    frontend_path: str,
+) -> FileResponse:
+    """
+    Serve compiled frontend files and support Vue history routes.
+
+    Unknown API paths continue returning a JSON 404 instead of the
+    Vue index page.
+    """
+
+    if (
+        frontend_path == "api"
+        or frontend_path.startswith("api/")
+    ):
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail="API endpoint not found",
+        )
+
+    frontend_root = (
+        FRONTEND_DIST.resolve()
+    )
+
+    requested_file = (
+        FRONTEND_DIST
+        / frontend_path
+    ).resolve()
+
+    if (
+        requested_file.is_file()
+        and frontend_root
+        in requested_file.parents
+    ):
+        return FileResponse(
+            requested_file
+        )
+
+    # Return index.html for Vue Router history URLs such as:
+    #
+    # /incidents/33
+    # /incidents/batch/MALTA/<batch-number>
+    # /analytics
+    # /admin/onboarding
+    return FileResponse(
+        frontend_index_file()
+    )
